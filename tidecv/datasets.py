@@ -1,3 +1,4 @@
+from tqdm import tqdm
 from .data import Data
 from . import functions as f
 
@@ -9,6 +10,7 @@ from collections import defaultdict
 import shutil
 import json
 import os
+import imagesize
 
 def default_name(path:str) -> str:
 	return os.path.splitext(os.path.basename(path))[0]
@@ -54,6 +56,86 @@ def download_annotations(name:str, url:str, force_download:bool=False) -> str:
 		return candidate_path
 
 
+
+def YOLOv5(path:str, labels:str, name:str=None) -> Data:
+	if name is None: name = default_name(path)
+
+	suffixes = '.png', '.PNG', '.jpg', '.JPG'
+
+	data = Data(name, max_dets=3000)
+
+	with Path(labels).open('r') as f:
+		for line in f:
+			line = line.strip()
+			if line:
+				data.add_class(int(line.split(' ')[0]), line.split(' ')[1])
+
+	folder = Path(path).resolve()
+	for file in tqdm(sorted(folder.rglob("*.txt"))):
+		wh = None
+		for suffix in suffixes:
+			im = folder / file.with_suffix(suffix).name
+			if im.exists():
+				wh = imagesize.get(im)
+				break
+		if wh is None:
+			print(f'No image found for txt {file}, skipping')
+			continue
+		wh = tuple(map(int, wh))
+
+		image_id = file.stem
+		data.add_image(image_id, image_id)
+
+		with file.open('r') as f:
+			for line in f:
+				line = line.strip()
+				parts = line.split(' ')
+				if len(parts) >= 5:
+					cls, *xywh = parts
+					x,y,w,h = tuple(map(float, xywh))
+					x,y,w,h = x*wh[0],y*wh[1],w*wh[0],h*wh[1] # Normalize
+					xywh = x-(w/2),y-(h/2),w,h # Convert center coords to top left
+					xywh = list(map(round, xywh))
+					data.add_ground_truth(image_id, cls, xywh)
+	
+	return data
+
+def YOLOv5Result(path:str, images_path:str, name:str=None) -> Data:
+	if name is None: name = default_name(path)
+
+	suffixes = '.png', '.PNG', '.jpg', '.JPG'
+
+	data = Data(name, max_dets=3000)
+
+	folder = Path(path).resolve()
+	im_folder = Path(images_path).resolve()
+	for file in tqdm(sorted(folder.rglob("*.txt"))):
+		wh = None
+		for suffix in suffixes:
+			im = im_folder / file.with_suffix(suffix).name
+			if im.exists():
+				wh = imagesize.get(im)
+				break
+		if wh is None:
+			print(f'No image found for txt {file}, skipping')
+			continue
+		wh = tuple(map(int, wh))
+
+		image_id = file.stem
+
+		with file.open('r') as f:
+			for line in f:
+				line = line.strip()
+				parts = line.split(' ')
+				if len(parts) >= 6:
+					cls, *xywh, conf = parts
+					x,y,w,h = tuple(map(float, xywh))
+					x,y,w,h = x*wh[0],y*wh[1],w*wh[0],h*wh[1] # Normalize
+					xywh = x-(w/2),y-(h/2),w,h # Convert center coords to top left
+					cls, xywh, conf = int(cls), list(map(round, xywh)), float(conf)
+					data.add_detection(image_id, cls, conf, xywh)
+	
+	return data
 
 
 
